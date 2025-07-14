@@ -1,8 +1,10 @@
 import 'dart:io';
-import 'package:chewie/chewie.dart';
+
+import 'package:aspect_ratio/models/aspect_ratio_type.dart';
 import 'package:flutter/material.dart';
-import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
+import 'package:video_player/video_player.dart';
+import 'package:chewie/chewie.dart';
 import '../viewmodels/media_view_model.dart';
 
 class HomeView extends StatefulWidget {
@@ -13,103 +15,88 @@ class HomeView extends StatefulWidget {
 }
 
 class _HomeViewState extends State<HomeView> {
+  VideoPlayerController? _videoController;
   ChewieController? _chewieController;
-
-  Future<void> _pickMedia(bool isVideo) async {
-    final picker = ImagePicker();
-    final picked = isVideo
-        ? await picker.pickVideo(source: ImageSource.gallery)
-        : await picker.pickImage(source: ImageSource.gallery);
-    if (picked != null) {
-      await context.read<MediaViewModel>().loadFromGallery(File(picked.path), isVideo);
-      _initChewie();
-    }
-  }
-
-  Future<void> _loadUrl() async {
-    final controller = TextEditingController();
-    await showDialog(
-      context: context,
-      builder: (_) => AlertDialog(
-        title: const Text("Enter media URL"),
-        content: TextField(
-          controller: controller,
-          decoration: const InputDecoration(hintText: "https://..."),
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text("Cancel")),
-          TextButton(
-              onPressed: () async {
-                Navigator.pop(context);
-                await context.read<MediaViewModel>().loadFromUrl(controller.text.trim());
-                _initChewie();
-              },
-              child: const Text("Load")),
-        ],
-      ),
-    );
-  }
-
-  void _initChewie() {
-    final viewModel = context.read<MediaViewModel>();
-    final controller = viewModel.videoController;
-    if (controller != null && controller.value.isInitialized) {
-      _chewieController?.dispose();
-      _chewieController = ChewieController(
-        videoPlayerController: controller,
-        autoPlay: false,
-        looping: false,
-        aspectRatio: controller.value.aspectRatio,
-      );
-    }
-  }
 
   @override
   void dispose() {
+    _videoController?.dispose();
     _chewieController?.dispose();
     super.dispose();
   }
 
+  Future<void> _setupVideo(String path) async {
+    _videoController = VideoPlayerController.file(File(path));
+    await _videoController!.initialize();
+    _chewieController = ChewieController(
+      videoPlayerController: _videoController!,
+      autoPlay: false,
+      looping: false,
+    );
+    setState(() {});
+  }
+
   @override
   Widget build(BuildContext context) {
-    final media = context.watch<MediaViewModel>().media;
+    final viewModel = Provider.of<MediaViewModel>(context);
+
+    if (viewModel.mediaFile != null && viewModel.isVideo && _videoController == null) {
+      _setupVideo(viewModel.mediaFile!.path);
+    }
 
     return Scaffold(
-      appBar: AppBar(title: const Text("Aspect Ratio")),
-      body: Center(
+      appBar: AppBar(title: const Text("Aspect Ratio Detector")),
+      body: Padding(
+        padding: const EdgeInsets.all(16),
         child: Column(
           children: [
-            Column(
-              mainAxisAlignment: MainAxisAlignment.spaceAround,
-              children: [
-                ElevatedButton(
-                  onPressed: () => _pickMedia(false),
-                  child: const Text("Pick Image"),
-                ),
-                ElevatedButton(
-                  onPressed: () => _pickMedia(true),
-                  child: const Text("Pick Video"),
-                ),
-              ],
-            ),
-            ElevatedButton(onPressed: _loadUrl, child: const Text("Load from URL")),
-            const SizedBox(height: 10),
-            if (media != null)
-              Expanded(
-                child: media.isVideo
-                    ? (_chewieController != null
-                        ? Chewie(controller: _chewieController!)
-                        : const Text("Loading video..."))
-                    : Image.file(media.file),
+            if (viewModel.mediaFile != null)
+              viewModel.isVideo
+                  ? (_chewieController != null
+                      ? AspectRatio(
+                          aspectRatio: _videoController!.value.aspectRatio,
+                          child: Chewie(controller: _chewieController!),
+                        )
+                      : const CircularProgressIndicator())
+                  : Image.file(viewModel.mediaFile!),
+            const SizedBox(height: 20),
+            if (viewModel.mediaSize != null)
+              Text(
+                'Dimensions: ${viewModel.mediaSize!.width.toInt()} x ${viewModel.mediaSize!.height.toInt()}',
               ),
-            if (media != null)
-              Padding(
-                padding: const EdgeInsets.all(12.0),
-                child: Text(
-                  media.aspectRatio,
-                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-                ),
-              )
+            if (viewModel.detectedAspectRatio != null)
+              Text('Aspect Ratio: ${viewModel.detectedAspectRatio!.label}'),
+            const SizedBox(height: 20),
+            ElevatedButton(
+              onPressed: () => viewModel.pickImage(),
+              child: const Text('Pick Image'),
+            ),
+            ElevatedButton(
+              onPressed: () => viewModel.pickVideo(),
+              child: const Text('Pick Video'),
+            ),
+            ElevatedButton(
+              onPressed: () async {
+                final controller = TextEditingController();
+                await showDialog(
+                  context: context,
+                  builder: (_) => AlertDialog(
+                    title: const Text('Enter URL'),
+                    content: TextField(controller: controller),
+                    actions: [
+                      TextButton(
+                        onPressed: () {
+                          Navigator.pop(context);
+                          viewModel.loadFromUrl(controller.text);
+                        },
+                        child: const Text('Load'),
+                      ),
+                    ],
+                  ),
+                );
+              },
+              child: const Text('Load from URL'),
+            ),
           ],
         ),
       ),
